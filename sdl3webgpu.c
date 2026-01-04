@@ -59,6 +59,10 @@ WGPUSurface SDL_GetWGPUSurface(WGPUInstance instance, SDL_Window* window) {
         if (!ns_window) return NULL;
         [ns_window.contentView setWantsLayer : YES];
         metal_layer = [CAMetalLayer layer];
+        // Note: presentsWithTransaction is NOT set here by default.
+        // It breaks vsync frame pacing (causes ~240fps on 120Hz display).
+        // Use SDL_SetWGPUSurfacePresentsWithTransaction() to enable it
+        // temporarily during resize for smooth resize behavior.
         [ns_window.contentView setLayer : metal_layer];
 
         WGPUSurfaceSourceMetalLayer fromMetalLayer;
@@ -177,5 +181,22 @@ WGPUSurface SDL_GetWGPUSurface(WGPUInstance instance, SDL_Window* window) {
     // TODO: See SDL_syswm.h for other possible enum values!
 #error "Unsupported WGPU_TARGET"
 #endif
+    return NULL;
 }
 
+void SDL_SetWGPUSurfacePresentsWithTransaction(SDL_Window* window, bool enabled) {
+#if defined(SDL_PLATFORM_MACOS)
+    SDL_PropertiesID props = SDL_GetWindowProperties(window);
+    NSWindow *ns_window = (__bridge NSWindow *)SDL_GetPointerProperty(props, SDL_PROP_WINDOW_COCOA_WINDOW_POINTER, NULL);
+    if (!ns_window) return;
+
+    CALayer* layer = ns_window.contentView.layer;
+    if ([layer isKindOfClass:[CAMetalLayer class]]) {
+        CAMetalLayer* metalLayer = (CAMetalLayer*)layer;
+        [metalLayer setPresentsWithTransaction:enabled];
+    }
+#else
+    (void)window;
+    (void)enabled;
+#endif
+}

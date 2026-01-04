@@ -42,6 +42,17 @@ extern "C" {
  */
 WGPUSurface SDL_GetWGPUSurface(WGPUInstance instance, SDL_Window* window);
 
+/**
+ * Set presentsWithTransaction on the Metal layer for smooth resize (macOS only).
+ *
+ * When enabled, frame presentation is synchronized with Core Animation transactions,
+ * which prevents visual glitches during window resize. However, this breaks vsync
+ * frame pacing, so it should only be enabled during active resize operations.
+ *
+ * On non-macOS platforms, this function does nothing.
+ */
+void SDL_SetWGPUSurfacePresentsWithTransaction(SDL_Window* window, bool enabled);
+
 #ifdef __cplusplus
 }
 #endif
