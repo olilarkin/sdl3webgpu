@@ -79,7 +79,7 @@ WGPUSurface SDL_GetWGPUSurface(WGPUInstance instance, SDL_Window* window) {
 #elif defined(SDL_PLATFORM_IOS)
     {
         UIWindow *ui_window = (__bridge UIWindow *)SDL_GetPointerProperty(props, SDL_PROP_WINDOW_UIKIT_WINDOW_POINTER, NULL);
-        if (!uiwindow) return NULL;
+        if (!ui_window) return NULL;
 
         UIView* ui_view = ui_window.rootViewController.view;
         CAMetalLayer* metal_layer = [CAMetalLayer new];
