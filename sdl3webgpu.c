@@ -55,15 +55,26 @@ WGPUSurface SDL_GetWGPUSurface(WGPUInstance instance, SDL_Window* window) {
 #if defined(SDL_PLATFORM_MACOS)
     {
         id metal_layer = NULL;
+        NSView *content_view = NULL;
+
+        // Try to get the NSWindow first (standalone window mode)
         NSWindow *ns_window = (__bridge NSWindow *)SDL_GetPointerProperty(props, SDL_PROP_WINDOW_COCOA_WINDOW_POINTER, NULL);
-        if (!ns_window) return NULL;
-        [ns_window.contentView setWantsLayer : YES];
+        if (ns_window) {
+            content_view = ns_window.contentView;
+        } else {
+            // Embedded mode: no NSWindow, get the content view directly
+            content_view = (__bridge NSView *)SDL_GetPointerProperty(props, SDL_PROP_WINDOW_COCOA_CONTENTVIEW_POINTER, NULL);
+        }
+
+        if (!content_view) return NULL;
+
+        [content_view setWantsLayer : YES];
         metal_layer = [CAMetalLayer layer];
         // Note: presentsWithTransaction is NOT set here by default.
         // It breaks vsync frame pacing (causes ~240fps on 120Hz display).
         // Use SDL_SetWGPUSurfacePresentsWithTransaction() to enable it
         // temporarily during resize for smooth resize behavior.
-        [ns_window.contentView setLayer : metal_layer];
+        [content_view setLayer : metal_layer];
 
         WGPUSurfaceSourceMetalLayer fromMetalLayer;
         fromMetalLayer.chain.sType = WGPUSType_SurfaceSourceMetalLayer;
@@ -187,10 +198,20 @@ WGPUSurface SDL_GetWGPUSurface(WGPUInstance instance, SDL_Window* window) {
 void SDL_SetWGPUSurfacePresentsWithTransaction(SDL_Window* window, bool enabled) {
 #if defined(SDL_PLATFORM_MACOS)
     SDL_PropertiesID props = SDL_GetWindowProperties(window);
-    NSWindow *ns_window = (__bridge NSWindow *)SDL_GetPointerProperty(props, SDL_PROP_WINDOW_COCOA_WINDOW_POINTER, NULL);
-    if (!ns_window) return;
+    NSView *content_view = NULL;
 
-    CALayer* layer = ns_window.contentView.layer;
+    // Try to get the NSWindow first (standalone window mode)
+    NSWindow *ns_window = (__bridge NSWindow *)SDL_GetPointerProperty(props, SDL_PROP_WINDOW_COCOA_WINDOW_POINTER, NULL);
+    if (ns_window) {
+        content_view = ns_window.contentView;
+    } else {
+        // Embedded mode: no NSWindow, get the content view directly
+        content_view = (__bridge NSView *)SDL_GetPointerProperty(props, SDL_PROP_WINDOW_COCOA_CONTENTVIEW_POINTER, NULL);
+    }
+
+    if (!content_view) return;
+
+    CALayer* layer = content_view.layer;
     if ([layer isKindOfClass:[CAMetalLayer class]]) {
         CAMetalLayer* metalLayer = (CAMetalLayer*)layer;
         [metalLayer setPresentsWithTransaction:enabled];
