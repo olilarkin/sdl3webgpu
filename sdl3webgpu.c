@@ -221,3 +221,24 @@ void SDL_SetWGPUSurfacePresentsWithTransaction(SDL_Window* window, bool enabled)
     (void)enabled;
 #endif
 }
+
+bool SDL_GetWGPUSurfaceInLiveResize(SDL_Window* window) {
+#if defined(SDL_PLATFORM_MACOS)
+    SDL_PropertiesID props = SDL_GetWindowProperties(window);
+    NSView *content_view = NULL;
+
+    // Try to get the NSWindow first (standalone window mode)
+    NSWindow *ns_window = (__bridge NSWindow *)SDL_GetPointerProperty(props, SDL_PROP_WINDOW_COCOA_WINDOW_POINTER, NULL);
+    if (ns_window) {
+        content_view = ns_window.contentView;
+    } else {
+        // Embedded mode: no NSWindow, get the content view directly
+        content_view = (__bridge NSView *)SDL_GetPointerProperty(props, SDL_PROP_WINDOW_COCOA_CONTENTVIEW_POINTER, NULL);
+    }
+
+    return content_view != NULL && content_view.inLiveResize;
+#else
+    (void)window;
+    return false;
+#endif
+}

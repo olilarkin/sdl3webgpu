@@ -53,6 +53,20 @@ WGPUSurface SDL_GetWGPUSurface(WGPUInstance instance, SDL_Window* window);
  */
 void SDL_SetWGPUSurfacePresentsWithTransaction(SDL_Window* window, bool enabled);
 
+/**
+ * Query whether the window's content view is in an interactive live resize
+ * (user dragging a window edge/corner). macOS only.
+ *
+ * Fullscreen Space animations, zoom/maximize, minimize and programmatic
+ * resizes are NOT live resize. Use this to decide when presentsWithTransaction
+ * is safe/beneficial: during live resize AppKit commits a Core Animation
+ * transaction every tick of its modal resize loop, so transaction-synchronized
+ * drawables are recycled each frame.
+ *
+ * On non-macOS platforms, always returns false.
+ */
+bool SDL_GetWGPUSurfaceInLiveResize(SDL_Window* window);
+
 #ifdef __cplusplus
 }
 #endif
