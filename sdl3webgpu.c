@@ -90,15 +90,23 @@ WGPUSurface SDL_GetWGPUSurface(WGPUInstance instance, SDL_Window* window) {
 #elif defined(SDL_PLATFORM_IOS)
     {
         UIWindow *ui_window = (__bridge UIWindow *)SDL_GetPointerProperty(props, SDL_PROP_WINDOW_UIKIT_WINDOW_POINTER, NULL);
-        if (!ui_window) return NULL;
+        CAMetalLayer* metal_layer;
 
-        UIView* ui_view = ui_window.rootViewController.view;
-        CAMetalLayer* metal_layer = [CAMetalLayer new];
-        metal_layer.opaque = true;
-        metal_layer.frame = ui_view.frame;
-        metal_layer.drawableSize = ui_view.frame.size;
+        if (!ui_window) {
+            // Embedded (parent-view) mode: the SDL content view is metal-backed
+            // (SDL_uikitmetalview), so its own layer is the CAMetalLayer.
+            UIView *content_view = (__bridge UIView *)SDL_GetPointerProperty(props, SDL_PROP_WINDOW_UIKIT_CONTENTVIEW_POINTER, NULL);
+            if (!content_view || ![content_view.layer isKindOfClass:[CAMetalLayer class]]) return NULL;
+            metal_layer = (CAMetalLayer *)content_view.layer;
+        } else {
+            UIView* ui_view = ui_window.rootViewController.view;
+            metal_layer = [CAMetalLayer new];
+            metal_layer.opaque = true;
+            metal_layer.frame = ui_view.frame;
+            metal_layer.drawableSize = ui_view.frame.size;
 
-        [ui_view.layer addSublayer: metal_layer];
+            [ui_view.layer addSublayer: metal_layer];
+        }
 
         WGPUSurfaceSourceMetalLayer fromMetalLayer;
         fromMetalLayer.chain.sType = WGPUSType_SurfaceSourceMetalLayer;
