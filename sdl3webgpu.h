@@ -67,6 +67,36 @@ void SDL_SetWGPUSurfacePresentsWithTransaction(SDL_Window* window, bool enabled)
  */
 bool SDL_GetWGPUSurfaceInLiveResize(SDL_Window* window);
 
+/**
+ * Match the Metal layer's contentsScale to the window's backing scale factor
+ * (macOS only). Call after (re)configuring the surface.
+ *
+ * The layer pins its contents top-left at native scale (so stale frames are
+ * never stretched during resizes); that requires contentsScale to equal the
+ * drawable-pixels-per-point ratio, which AppKit does not maintain for a custom
+ * layer: the backing scale factor (2.0 on Retina, 1.0 on a non-Retina display)
+ * for SDL_WINDOW_HIGH_PIXEL_DENSITY windows, otherwise 1.0.
+ *
+ * On non-macOS platforms, this function does nothing.
+ */
+void SDL_SyncWGPUSurfaceContentsScale(SDL_Window* window);
+
+/**
+ * Query whether the window is animating into or out of a fullscreen Space
+ * (green button / Toggle Full Screen). macOS only.
+ *
+ * During the transition the window server holds on to the presented drawables
+ * while it animates, so the CAMetalLayer drawable pool runs dry and
+ * -[CAMetalLayer nextDrawable] blocks for its full 1 second timeout. The
+ * window server animates a scaled copy of the last frame instead (and SDL
+ * suppresses resize events until the transition ends), so callers should skip
+ * rendering while this returns true.
+ *
+ * Returns false on non-macOS platforms, off the main thread, and for windows
+ * without an SDL Cocoa delegate (embedded views).
+ */
+bool SDL_GetWGPUSurfaceInFullscreenTransition(SDL_Window* window);
+
 #ifdef __cplusplus
 }
 #endif

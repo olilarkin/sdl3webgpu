@@ -38,6 +38,7 @@
 #  include <Cocoa/Cocoa.h>
 #  include <Foundation/Foundation.h>
 #  include <QuartzCore/CAMetalLayer.h>
+#  include <QuartzCore/CATransaction.h>
 #elif defined(SDL_PLATFORM_IOS)
 #  include <UIKit/UIKit.h>
 #  include <Foundation/Foundation.h>
@@ -75,6 +76,15 @@ WGPUSurface SDL_GetWGPUSurface(WGPUInstance instance, SDL_Window* window) {
         // Use SDL_SetWGPUSurfacePresentsWithTransaction() to enable it
         // temporarily during resize for smooth resize behavior.
         [content_view setLayer : metal_layer];
+
+        // When the view's size changes before a new drawable is presented (window
+        // resize / zoom animation, fullscreen transition, host resizing a plugin
+        // view), Core Animation would by default scale the previous drawable to
+        // fill the new bounds, which shows up as a visibly stretched frame. Pin the
+        // contents to the top-left at their native scale instead, so stale content
+        // stays crisp and in place until the next frame arrives at the new size.
+        content_view.layerContentsPlacement = NSViewLayerContentsPlacementTopLeft;
+        [(CAMetalLayer *)metal_layer setContentsGravity:kCAGravityTopLeft];
 
         WGPUSurfaceSourceMetalLayer fromMetalLayer;
         fromMetalLayer.chain.sType = WGPUSType_SurfaceSourceMetalLayer;
@@ -222,6 +232,11 @@ void SDL_SetWGPUSurfacePresentsWithTransaction(SDL_Window* window, bool enabled)
     CALayer* layer = content_view.layer;
     if ([layer isKindOfClass:[CAMetalLayer class]]) {
         CAMetalLayer* metalLayer = (CAMetalLayer*)layer;
+        if (!enabled && metalLayer.presentsWithTransaction) {
+            // Commit any present still waiting on a transaction, so that drawable
+            // is recycled before frames go back to presenting immediately
+            [CATransaction flush];
+        }
         [metalLayer setPresentsWithTransaction:enabled];
     }
 #else
@@ -248,5 +263,67 @@ bool SDL_GetWGPUSurfaceInLiveResize(SDL_Window* window) {
 #else
     (void)window;
     return false;
+#endif
+}
+
+bool SDL_GetWGPUSurfaceInFullscreenTransition(SDL_Window* window) {
+#if defined(SDL_PLATFORM_MACOS)
+    // AppKit state may only be touched on the main thread (threaded render
+    // loops can't stall the UI in nextDrawable anyway)
+    if (![NSThread isMainThread]) return false;
+
+    SDL_PropertiesID props = SDL_GetWindowProperties(window);
+    NSWindow *ns_window = (__bridge NSWindow *)SDL_GetPointerProperty(props, SDL_PROP_WINDOW_COCOA_WINDOW_POINTER, NULL);
+    if (!ns_window) return false;  // Embedded: the host owns the window
+
+    // SDL's window listener (installed as the NSWindow delegate) tracks the
+    // fullscreen Space transition from windowWillEnter/ExitFullScreen until
+    // windowDidEnter/ExitFullScreen (or the DidFail variants).
+    id delegate = ns_window.delegate;
+    SEL sel = NSSelectorFromString(@"isInFullscreenSpaceTransition");
+    if (delegate && [delegate respondsToSelector:sel]) {
+        return ((BOOL (*)(id, SEL))[delegate methodForSelector:sel])(delegate, sel) == YES;
+    }
+    return false;
+#else
+    (void)window;
+    return false;
+#endif
+}
+
+void SDL_SyncWGPUSurfaceContentsScale(SDL_Window* window) {
+#if defined(SDL_PLATFORM_MACOS)
+    SDL_PropertiesID props = SDL_GetWindowProperties(window);
+    NSView *content_view = NULL;
+    NSWindow *ns_window = (__bridge NSWindow *)SDL_GetPointerProperty(props, SDL_PROP_WINDOW_COCOA_WINDOW_POINTER, NULL);
+    if (ns_window) {
+        content_view = ns_window.contentView;
+    } else {
+        // Embedded mode: no NSWindow, get the content view directly
+        content_view = (__bridge NSView *)SDL_GetPointerProperty(props, SDL_PROP_WINDOW_COCOA_CONTENTVIEW_POINTER, NULL);
+    }
+    if (!content_view || ![content_view.layer isKindOfClass:[CAMetalLayer class]]) return;
+
+    // Without SDL_WINDOW_HIGH_PIXEL_DENSITY the drawable is sized in points
+    CGFloat scale = 1.0;
+    if (SDL_GetWindowFlags(window) & SDL_WINDOW_HIGH_PIXEL_DENSITY) {
+        NSWindow *host_window = content_view.window;  // Host window when embedded
+        if (host_window) {
+            scale = host_window.backingScaleFactor;
+        } else if ([NSScreen mainScreen]) {
+            scale = [NSScreen mainScreen].backingScaleFactor;
+        }
+        if (scale <= 0.0) scale = 1.0;
+    }
+
+    CAMetalLayer *metal_layer = (CAMetalLayer *)content_view.layer;
+    if (metal_layer.contentsScale != scale) {
+        [CATransaction begin];
+        [CATransaction setDisableActions:YES];
+        metal_layer.contentsScale = scale;
+        [CATransaction commit];
+    }
+#else
+    (void)window;
 #endif
 }
