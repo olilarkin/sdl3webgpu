@@ -85,17 +85,35 @@ void SDL_SyncWGPUSurfaceContentsScale(SDL_Window* window);
  * Query whether the window is animating into or out of a fullscreen Space
  * (green button / Toggle Full Screen). macOS only.
  *
- * During the transition the window server holds on to the presented drawables
- * while it animates, so the CAMetalLayer drawable pool runs dry and
- * -[CAMetalLayer nextDrawable] blocks for its full 1 second timeout. The
- * window server animates a scaled copy of the last frame instead (and SDL
- * suppresses resize events until the transition ends), so callers should skip
- * rendering while this returns true.
+ * AppKit's transition animation crossfades window-server snapshots, so frames
+ * presented during it don't show properly (and can stall -[CAMetalLayer
+ * nextDrawable] for its 1 second timeout); SDL also suppresses resize events
+ * until the transition ends. Callers should skip rendering while this returns
+ * true, e.g. with the content hidden (SDL_SetWGPUSurfaceContentHidden).
  *
  * Returns false on non-macOS platforms, off the main thread, and for windows
  * without an SDL Cocoa delegate (embedded views).
  */
 bool SDL_GetWGPUSurfaceInFullscreenTransition(SDL_Window* window);
+
+/**
+ * macOS only: Hide or show the window's CAMetalLayer (without animation), e.g.
+ * to show only the window background during a fullscreen Space transition.
+ * Main thread only; does nothing elsewhere and for embedded views.
+ */
+void SDL_SetWGPUSurfaceContentHidden(SDL_Window* window, bool hidden);
+
+/**
+ * macOS only: Blank the window for fullscreen Space transitions, so AppKit's
+ * animation shows only the window background. toggleFullScreen: is wrapped to
+ * hide the CAMetalLayer and let the window server show that (~2 refreshes)
+ * before AppKit snapshots the window, delaying the transition by ~34ms; the
+ * layer is also hidden at NSWindowWillEnter/ExitFullScreenNotification. The caller reveals the content again with
+ * SDL_SetWGPUSurfaceContentHidden(window, false) once it has presented a frame
+ * at the final size. Call once per window on the main thread; does nothing for
+ * embedded views.
+ */
+void SDL_HideWGPUSurfaceOnFullscreenTransition(SDL_Window* window);
 
 #ifdef __cplusplus
 }

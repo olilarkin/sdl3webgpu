@@ -39,6 +39,7 @@
 #  include <Foundation/Foundation.h>
 #  include <QuartzCore/CAMetalLayer.h>
 #  include <QuartzCore/CATransaction.h>
+#  include <objc/runtime.h>
 #elif defined(SDL_PLATFORM_IOS)
 #  include <UIKit/UIKit.h>
 #  include <Foundation/Foundation.h>
@@ -323,6 +324,117 @@ void SDL_SyncWGPUSurfaceContentsScale(SDL_Window* window) {
         metal_layer.contentsScale = scale;
         [CATransaction commit];
     }
+#else
+    (void)window;
+#endif
+}
+
+#if defined(SDL_PLATFORM_MACOS)
+static void sdlwgpu_setLayerHidden(NSWindow* ns_window, bool hidden, bool flush) {
+    if (![ns_window.contentView.layer isKindOfClass:[CAMetalLayer class]]) return;
+    CAMetalLayer *metal_layer = (CAMetalLayer *)ns_window.contentView.layer;
+    if (metal_layer.hidden == hidden) return;
+    [CATransaction begin];
+    [CATransaction setDisableActions:YES];
+    metal_layer.hidden = hidden;
+    [CATransaction commit];
+    if (flush) [CATransaction flush];
+}
+#endif
+
+void SDL_SetWGPUSurfaceContentHidden(SDL_Window* window, bool hidden) {
+#if defined(SDL_PLATFORM_MACOS)
+    if (![NSThread isMainThread]) return;
+    SDL_PropertiesID props = SDL_GetWindowProperties(window);
+    NSWindow *ns_window = (__bridge NSWindow *)SDL_GetPointerProperty(props, SDL_PROP_WINDOW_COCOA_WINDOW_POINTER, NULL);
+    if (ns_window) sdlwgpu_setLayerHidden(ns_window, hidden, false);
+#else
+    (void)window; (void)hidden;
+#endif
+}
+
+#if defined(SDL_PLATFORM_MACOS)
+// toggleFullScreen: wrapper (see SDL_HideWGPUSurfaceOnFullscreenTransition)
+static IMP sdlwgpu_originalToggleFullScreen = NULL;
+static char kTogglePendingKey;
+
+static bool sdlwgpu_isInFullscreenTransition(NSWindow* window) {
+    id delegate = window.delegate;
+    SEL sel = NSSelectorFromString(@"isInFullscreenSpaceTransition");
+    return delegate && [delegate respondsToSelector:sel] &&
+           ((BOOL (*)(id, SEL))[delegate methodForSelector:sel])(delegate, sel) == YES;
+}
+
+static void sdlwgpu_toggleFullScreen(id self, SEL _cmd, id sender) {
+    NSWindow* window = (NSWindow*)self;
+    void (*original)(id, SEL, id) = (void (*)(id, SEL, id))sdlwgpu_originalToggleFullScreen;
+    if (objc_getAssociatedObject(window, &kTogglePendingKey)) {
+        return;  // Already toggling (e.g. a double click on the green button)
+    }
+    // SDL_SetWindowFullscreen marks its transition as started before calling
+    // this; let those (and windows without our layer) through untouched
+    if (![window.contentView.layer isKindOfClass:[CAMetalLayer class]] ||
+        sdlwgpu_isInFullscreenTransition(window)) {
+        original(self, _cmd, sender);
+        return;
+    }
+    // Blank the window and give the window server a couple of refreshes to show
+    // it before AppKit takes the "before" snapshot for the transition animation
+    sdlwgpu_setLayerHidden(window, true, true);
+    objc_setAssociatedObject(window, &kTogglePendingKey, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    [window retain];
+    [sender retain];
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 34 * NSEC_PER_MSEC), dispatch_get_main_queue(), ^{
+        objc_setAssociatedObject(window, &kTogglePendingKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        original(window, _cmd, sender);
+        // No transition started (e.g. fullscreen not allowed): show the content
+        // again. Otherwise the app reveals it once the transition is over.
+        if (!sdlwgpu_isInFullscreenTransition(window)) {
+            sdlwgpu_setLayerHidden(window, false, false);
+        }
+        [sender release];
+        [window release];
+    });
+}
+#endif
+
+void SDL_HideWGPUSurfaceOnFullscreenTransition(SDL_Window* window) {
+#if defined(SDL_PLATFORM_MACOS)
+    if (![NSThread isMainThread]) return;
+    SDL_PropertiesID props = SDL_GetWindowProperties(window);
+    NSWindow *ns_window = (__bridge NSWindow *)SDL_GetPointerProperty(props, SDL_PROP_WINDOW_COCOA_WINDOW_POINTER, NULL);
+    if (!ns_window) return;  // Embedded: the host owns the window
+    static const char *kInstalledKey = "SDL_WGPU_hide_on_fullscreen_transition";
+    if (SDL_GetBooleanProperty(props, kInstalledKey, false)) return;
+    SDL_SetBooleanProperty(props, kInstalledKey, true);
+
+    // Wrap toggleFullScreen: (green button, View > Enter Full Screen, ctrl-cmd-F
+    // and SDL_SetWindowFullscreen all go through it) to blank the window before
+    // AppKit's "before" snapshot, which it captures ahead of the notifications.
+    Class cls = [ns_window class];
+    SEL toggle = @selector(toggleFullScreen:);
+    if (!sdlwgpu_originalToggleFullScreen) {
+        Method m = class_getInstanceMethod(cls, toggle);
+        sdlwgpu_originalToggleFullScreen = method_getImplementation(m);
+        if (!class_addMethod(cls, toggle, (IMP)sdlwgpu_toggleFullScreen, method_getTypeEncoding(m))) {
+            method_setImplementation(m, (IMP)sdlwgpu_toggleFullScreen);
+        }
+    }
+
+    // Also hide at the "will" notifications, before the app's next frame, for
+    // transitions that skip the wrapper's blanking (e.g. SDL's own), which keeps
+    // the content out of AppKit's "after" snapshot. The block uses note.object
+    // rather than capturing the window, which would retain it (this file is not
+    // compiled with ARC); the observers are object-specific, so they never fire
+    // once the window is gone.
+    NSNotificationCenter *center = [NSNotificationCenter defaultCenter];
+    void (^hide)(NSNotification *) = ^(NSNotification *note) {
+        sdlwgpu_setLayerHidden((NSWindow *)note.object, true, true);
+    };
+    [center addObserverForName:NSWindowWillEnterFullScreenNotification object:ns_window
+                         queue:nil usingBlock:hide];
+    [center addObserverForName:NSWindowWillExitFullScreenNotification object:ns_window
+                         queue:nil usingBlock:hide];
 #else
     (void)window;
 #endif
